@@ -75,7 +75,7 @@ jobs:
           fi
 
           tag="v$version"
-          tag_exists="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq --arg ref "refs/tags/${tag}" 'any(.[]; .ref == $ref)')"
+          tag_exists="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" | jq -r --arg ref "refs/tags/${tag}" 'any(.[]; .ref == $ref)')"
           if [[ "$tag_exists" == "true" ]] ||
             gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Tag or release '$tag' already exists on ${GITHUB_REPOSITORY}. Provide a new version input." >&2
