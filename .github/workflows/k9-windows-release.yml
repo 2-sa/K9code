@@ -378,7 +378,7 @@ jobs:
 
   desktop_win_x64:
     name: Desktop Windows x64
-    needs: [preflight, build_bundle]
+    needs: [preflight, build_bundle, linux_cli_x64]
     uses: ./.github/workflows/release-desktop.yml
     with:
       version: ${{ needs.preflight.outputs.version }}
@@ -403,7 +403,7 @@ jobs:
   desktop_win_arm64:
     name: Desktop Windows arm64
     if: ${{ inputs.include_arm64 }}
-    needs: [preflight, build_bundle]
+    needs: [preflight, build_bundle, linux_cli_arm64]
     uses: ./.github/workflows/release-desktop.yml
     with:
       version: ${{ needs.preflight.outputs.version }}
