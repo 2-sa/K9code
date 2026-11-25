@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+import {
+  CLI_RELEASES_PAGE_URL,
+  cliArchiveTarCommand,
+  cliReleaseAssetUrl,
+  cliReleaseDownloadBaseUrl,
+  cliReleaseIndexPageUrl,
+  newestCliReleaseVersion,
+  parseChecksums,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
+  it("defaults release URLs to 2-sa/K9code", () => {
+    expect(CLI_RELEASES_PAGE_URL).toBe("https://github.com/2-sa/K9code/releases");
+    expect(cliReleaseDownloadBaseUrl("1.2.3")).toBe(
+      "https://github.com/2-sa/K9code/releases/download/v1.2.3",
+    );
+    expect(cliReleaseAssetUrl("1.2.3", "SHA256SUMS")).toBe(
+      "https://github.com/2-sa/K9code/releases/download/v1.2.3/SHA256SUMS",
+    );
+    expect(cliReleaseIndexPageUrl(1)).toBe(
+      "https://api.github.com/repos/2-sa/K9code/releases?per_page=100&page=1",
+    );
+  });
+
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
