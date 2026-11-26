@@ -503,4 +503,92 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       assert.deepEqual(capturedPaths, []);
     }),
   );
+
+  it.effect("is disabled by default with no custom host or key and makes zero HTTP requests", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests += 1;
+          return HttpClientResponse.fromWeb(request, new Response(null, { status: 204 }));
+        }),
+      );
+      const runtimeLayer = AnalyticsService.layer.pipe(
+        Layer.provideMerge(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-noop-" }),
+        ),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcess.Platform, "win32"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
+            Layer.succeed(HostProcess.Environment, {}),
+            Layer.succeed(HttpClient.HttpClient, client),
+            ManagedPolicy.layerTest(),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        const recorded = yield* analytics.record("server.boot.heartbeat", { threadCount: 1 });
+        assert.isFalse(recorded);
+        yield* analytics.recordOwners([{ source: "device", ownerId: "a".repeat(64) }], "client");
+        yield* analytics.flush;
+      }).pipe(Effect.provide(runtimeLayer));
+
+      assert.equal(requests, 0);
+    }),
+  );
+
+  it.effect(
+    "stays disabled unless custom host, key, and T3CODE_TELEMETRY_ENABLED=true are all set",
+    () =>
+      Effect.gen(function* () {
+        for (const env of [
+          { T3CODE_TELEMETRY_ENABLED: true },
+          { T3CODE_TELEMETRY_ENABLED: true, T3CODE_TELEMETRY_KEY: "phc_test_key" },
+          { T3CODE_TELEMETRY_ENABLED: true, T3CODE_TELEMETRY_HOST: "http://localhost" },
+          { T3CODE_TELEMETRY_KEY: "phc_test_key", T3CODE_TELEMETRY_HOST: "http://localhost" },
+          {
+            T3CODE_TELEMETRY_ENABLED: true,
+            T3CODE_TELEMETRY_KEY: "   ",
+            T3CODE_TELEMETRY_HOST: "http://localhost",
+          },
+        ]) {
+          let requests = 0;
+          const client = HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests += 1;
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 204 }));
+            }),
+          );
+          const runtimeLayer = AnalyticsService.layer.pipe(
+            Layer.provideMerge(
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-telemetry-partial-",
+              }),
+            ),
+            Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(HostProcess.Platform, "win32"),
+                Layer.succeed(HostProcess.Architecture, "x64"),
+                Layer.succeed(HostProcess.Environment, {}),
+                Layer.succeed(HttpClient.HttpClient, client),
+                ManagedPolicy.layerTest(),
+              ),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const analytics = yield* AnalyticsService.AnalyticsService;
+            assert.isFalse(yield* analytics.record("test.partial", { index: 1 }));
+            yield* analytics.flush;
+          }).pipe(Effect.provide(runtimeLayer));
+
+          assert.equal(requests, 0);
+        }
+      }),
+  );
 });

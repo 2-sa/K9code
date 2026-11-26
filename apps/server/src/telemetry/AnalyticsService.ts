@@ -1,6 +1,6 @@
-// T3 ingest retains events and deduplicates retries by UUID.
+// Custom analytics ingest retains events and deduplicates retries by UUID.
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isCiEnvironment, isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
+import { isDoNotTrackSet } from "@t3tools/shared/otelEnvironment";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -68,12 +68,8 @@ function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
-  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(
-    Config.withDefault("https://ingest.t3.codes"),
-  ),
+  ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(Config.option),
+  ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(Config.option),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
@@ -126,22 +122,31 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const hostEnvironment = yield* HostProcess.Environment;
+  const ingestKey = Option.getOrUndefined(telemetryConfig.ingestKey)?.trim() ?? "";
+  const ingestHost =
+    Option.getOrUndefined(telemetryConfig.ingestHost)?.trim().replace(/\/+$/, "") ?? "";
+  const hasCustomEndpoint = ingestKey.length > 0 && ingestHost.length > 0;
   const awaitingShellConsent = hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1";
-  const enabledByDefault = !isCiEnvironment(hostEnvironment);
-  const enabledAtStartup = Option.getOrElse(telemetryConfig.enabled, () => enabledByDefault);
+  const enabledAtStartup = Option.getOrElse(telemetryConfig.enabled, () => false);
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
+  if (!hasCustomEndpoint || !enabledAtStartup || !policyAllows) {
+    return AnalyticsService.of({
+      record: Effect.fn("AnalyticsService.record")(() => Effect.succeed(false)),
+      flush: Effect.void,
+      recordOwners: Effect.fn("AnalyticsService.recordOwners")(() => Effect.void),
+    });
+  }
   // A cached PATH does not establish consent from the current login shell.
   const telemetryEnabled = Effect.suspend(() => {
-    if (!enabledAtStartup || !policyAllows || isDoNotTrackSet(hostEnvironment))
-      return Effect.succeed(false);
+    if (isDoNotTrackSet(hostEnvironment)) return Effect.succeed(false);
     if (!awaitingShellConsent) return Effect.succeed(true);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
       return Effect.succeed(false);
     const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
     return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
-      Config.withDefault(enabledByDefault),
+      Config.withDefault(enabledAtStartup),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnv({
@@ -212,7 +217,7 @@ export const make = Effect.gen(function* () {
     if (!(yield* telemetryEnabled) || !distinctId) return;
 
     const payload = {
-      api_key: telemetryConfig.ingestKey,
+      api_key: ingestKey,
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
@@ -244,7 +249,7 @@ export const make = Effect.gen(function* () {
       })),
     };
 
-    yield* HttpClientRequest.post(`${telemetryConfig.ingestHost}/batch/`).pipe(
+    yield* HttpClientRequest.post(`${ingestHost}/batch/`).pipe(
       HttpClientRequest.bodyJson(payload),
       Effect.flatMap(httpClient.execute),
       Effect.flatMap(HttpClientResponse.filterStatusOk),

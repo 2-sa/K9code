@@ -8,6 +8,7 @@ import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/code
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { afterAll, beforeEach, vi } from "vite-plus/test";
@@ -65,6 +66,7 @@ const layerDesktopClerk = (
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
   stateDir = clerkStateDir,
+  publishableKey?: string,
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir,
@@ -100,6 +102,13 @@ const layerDesktopClerk = (
 
   return DesktopClerk.layer.pipe(
     Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown(
+          publishableKey === undefined ? {} : { T3CODE_CLERK_PUBLISHABLE_KEY: publishableKey },
+        ),
+      ),
+    ),
+    Layer.provide(
       Layer.mergeAll(
         NodePathLayer.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
@@ -116,6 +125,38 @@ describe("DesktopClerk", () => {
     createClerkBridgeMock.mockReset();
     requestSingleInstanceLockMock.mockReset().mockReturnValue(true);
     storageMock.mockReset();
+  });
+
+  it("skips Clerk bridge initialization when publishableKey is empty or unset", () => {
+    for (const publishableKey of [undefined, "", "   "]) {
+      const events: string[] = [];
+      // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously without creating a Clerk bridge.
+      Effect.runSync(
+        Effect.scoped(
+          Layer.build(
+            layerDesktopClerk(
+              false,
+              events,
+              "win32",
+              DesktopPreReadyFileSystem.layer,
+              undefined,
+              undefined,
+              clerkStateDir,
+              publishableKey,
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(events, [
+        "setPath:userData:/tmp/app-data/t3code-v2",
+        "requestSingleInstanceLock",
+        "on:second-instance",
+        "on:open-url",
+      ]);
+      assert.equal(createClerkBridgeMock.mock.calls.length, 0);
+      assert.equal(storageMock.mock.calls.length, 0);
+    }
   });
 
   it.each([
@@ -144,7 +185,7 @@ describe("DesktopClerk", () => {
       userData: "/tmp/app-data/t3code-dev",
     },
   ])(
-    "creates the bridge before startup can yield to the event loop ($name)",
+    "creates the bridge before startup can yield to the event loop when configured ($name)",
     ({ isDevelopment, platform, userData }) => {
       const events: string[] = [];
       storageMock.mockReturnValue(storageAdapter);
@@ -156,7 +197,16 @@ describe("DesktopClerk", () => {
       Effect.runSync(
         Effect.scoped(
           Layer.build(
-            layerDesktopClerk(isDevelopment, events, platform, DesktopPreReadyFileSystem.layer),
+            layerDesktopClerk(
+              isDevelopment,
+              events,
+              platform,
+              DesktopPreReadyFileSystem.layer,
+              undefined,
+              undefined,
+              clerkStateDir,
+              "pk_test_example",
+            ),
           ),
         ),
       );
@@ -169,7 +219,7 @@ describe("DesktopClerk", () => {
         "createClerkBridge",
       ]);
       assert.deepEqual(storageMock.mock.calls, [
-        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+        [{ path: NodePath.posix.join(NodePath.posix.resolve(clerkStateDir), "clerk") }],
       ]);
       assert.strictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
@@ -181,11 +231,20 @@ describe("DesktopClerk", () => {
 
     return Effect.sync(() => {
       assert.deepEqual(storageMock.mock.calls, [
-        [{ path: NodePath.resolve("relative-state", "clerk") }],
+        [{ path: NodePath.posix.resolve("relative-state", "clerk") }],
       ]);
     }).pipe(
       Effect.provide(
-        layerDesktopClerk(true, [], "darwin", undefined, undefined, undefined, "relative-state"),
+        layerDesktopClerk(
+          true,
+          [],
+          "darwin",
+          undefined,
+          undefined,
+          undefined,
+          "relative-state",
+          "pk_test_example",
+        ),
       ),
     );
   });
@@ -287,7 +346,16 @@ describe("DesktopClerk", () => {
         requestSingleInstanceLockMock.mockReturnValueOnce(false);
         createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
         const events: string[] = [];
-        const runtime = layerDesktopClerk(false, events, platform).pipe(
+        const runtime = layerDesktopClerk(
+          false,
+          events,
+          platform,
+          undefined,
+          undefined,
+          undefined,
+          clerkStateDir,
+          "pk_test_example",
+        ).pipe(
           Layer.flatMap(() =>
             Layer.effectDiscard(
               Effect.sync(() => {

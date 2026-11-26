@@ -1,6 +1,7 @@
 import { createClerkBridge } from "@clerk/electron";
 import * as NodeURL from "node:url";
 import { storage } from "@clerk/electron/storage";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,10 +67,21 @@ export class DesktopClerk extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopClerk") {}
 
+function resolveDesktopClerkPublishableKey(publishableKey: string | undefined): string | undefined {
+  const normalizedKey = publishableKey?.trim();
+  return normalizedKey ? normalizedKey : undefined;
+}
+
+const buildClerkPublishableKey = resolveDesktopClerkPublishableKey(
+  typeof __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
+    ? undefined
+    : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
+);
+
 function resolveDesktopClerkFrontendApiHostname(
   publishableKey: string | undefined,
 ): string | undefined {
-  const normalizedKey = publishableKey?.trim();
+  const normalizedKey = resolveDesktopClerkPublishableKey(publishableKey);
   if (!normalizedKey) return undefined;
 
   try {
@@ -79,11 +91,8 @@ function resolveDesktopClerkFrontendApiHostname(
   }
 }
 
-export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHostname(
-  typeof __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
-    ? undefined
-    : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
-);
+export const desktopClerkFrontendApiHostname =
+  resolveDesktopClerkFrontendApiHostname(buildClerkPublishableKey);
 
 function createDesktopClerkBridge(tokenDirectory: string, isDevelopment: boolean) {
   return createClerkBridge({
@@ -103,6 +112,11 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const shell = yield* ElectronShell.ElectronShell;
   const path = yield* Path.Path;
+  const publishableKey = resolveDesktopClerkPublishableKey(
+    yield* Config.String("T3CODE_CLERK_PUBLISHABLE_KEY").pipe(
+      Config.withDefault(buildClerkPublishableKey ?? ""),
+    ),
+  );
 
   // Must not yield: the bridge registers a scheme Electron rejects once ready.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
@@ -136,31 +150,33 @@ export const make = Effect.gen(function* () {
     if (handleOpenUrl(url)) event.preventDefault();
   });
 
-  yield* Effect.acquireRelease(
-    Effect.try({
-      try: () =>
-        createDesktopClerkBridge(
-          path.resolve(environment.stateDir, "clerk"),
-          environment.isDevelopment,
-        ),
-      catch: (cause) =>
-        new DesktopClerkBridgeInitializationError({
-          stateDir: environment.stateDir,
-          isDevelopment: environment.isDevelopment,
-          cause,
-        }),
-    }),
-    (bridge) =>
+  if (publishableKey !== undefined) {
+    yield* Effect.acquireRelease(
       Effect.try({
-        try: () => bridge.cleanup(),
+        try: () =>
+          createDesktopClerkBridge(
+            path.resolve(environment.stateDir, "clerk"),
+            environment.isDevelopment,
+          ),
         catch: (cause) =>
-          new DesktopClerkBridgeCleanupError({
+          new DesktopClerkBridgeInitializationError({
             stateDir: environment.stateDir,
             isDevelopment: environment.isDevelopment,
             cause,
           }),
-      }).pipe(Effect.orDie),
-  );
+      }),
+      (bridge) =>
+        Effect.try({
+          try: () => bridge.cleanup(),
+          catch: (cause) =>
+            new DesktopClerkBridgeCleanupError({
+              stateDir: environment.stateDir,
+              isDevelopment: environment.isDevelopment,
+              cause,
+            }),
+        }).pipe(Effect.orDie),
+    );
+  }
 
   return DesktopClerk.of({
     configure: Effect.gen(function* () {
