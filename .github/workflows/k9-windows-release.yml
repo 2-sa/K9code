@@ -156,6 +156,15 @@ jobs:
           T3CODE_TELEMETRY_CHANNEL: dev
         run: vp run build:desktop:bundle
 
+      # Upload only the expected hidden file, without opting all build outputs into hidden uploads.
+      - name: Stage web asset manifest
+        shell: bash
+        run: |
+          manifest=apps/server/dist/client/.vite/manifest.json
+          if [[ -f "$manifest" ]]; then
+            cp "$manifest" apps/server/dist/client/vite-manifest.release.json
+          fi
+
       - name: Upload JS bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -200,7 +209,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
-          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/build.rs', 'native/resource-monitor/src/**') }}
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
@@ -217,6 +226,15 @@ jobs:
         with:
           name: js-bundle
           path: apps
+
+      - name: Restore web asset manifest
+        shell: bash
+        run: |
+          client=apps/server/dist/client
+          if [[ -f "$client/vite-manifest.release.json" ]]; then
+            mkdir -p "$client/.vite"
+            mv "$client/vite-manifest.release.json" "$client/.vite/manifest.json"
+          fi
 
       - name: Build resource monitor
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
@@ -304,7 +322,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/resource-monitor/target/aarch64-unknown-linux-gnu/release/t3-resource-monitor
-          key: resource-monitor-aarch64-unknown-linux-gnu-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          key: resource-monitor-aarch64-unknown-linux-gnu-${{ hashFiles('.cargo/config.toml', 'native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/build.rs', 'native/resource-monitor/src/**') }}
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
@@ -321,6 +339,15 @@ jobs:
         with:
           name: js-bundle
           path: apps
+
+      - name: Restore web asset manifest
+        shell: bash
+        run: |
+          client=apps/server/dist/client
+          if [[ -f "$client/vite-manifest.release.json" ]]; then
+            mkdir -p "$client/.vite"
+            mv "$client/vite-manifest.release.json" "$client/.vite/manifest.json"
+          fi
 
       - name: Build resource monitor
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
